@@ -527,11 +527,13 @@ void ThingType::unserialize(const uint16_t clientId, const ThingCategory categor
             else if (attr == 28)
                 attr = ThingAttrAnimateAlways;
 
-            /* "Multi Use" and "Force Use" are swapped */
-            if (attr == ThingAttrMultiUse)
-                attr = ThingAttrForceUse;
-            else if (attr == ThingAttrForceUse)
-                attr = ThingAttrMultiUse;
+            if (g_game.getClientVersion() >= 780) {
+                  /* "Multi Use" and "Force Use" are swapped */
+                  if (attr == ThingAttrMultiUse)
+                      attr = ThingAttrForceUse;
+                  else if (attr == ThingAttrForceUse)
+                      attr = ThingAttrMultiUse;
+              }
         }
 
         const auto thingAttr = static_cast<ThingAttr>(attr);
