@@ -53,6 +53,11 @@ controller:registerEvents(g_game, {
             g_game.enableFeature(GameTileAddThingWithStackpos)
         end
 
+        -- TibiaCore 7.72 sends stackpos in 0x6A (TileAddThing) when OS is OTClient family
+        if version == 772 then
+            g_game.enableFeature(GameTileAddThingWithStackpos)
+        end
+
         if version >= 854 then
             g_game.enableFeature(GameCreatureEmblems)
         end

@@ -1,0 +1,119 @@
+name: Build PvPEnforced - Windows (DirectX + OpenGL)
+
+# Builda mehah/otclient com nosso patch em DUAS variantes:
+#   - Pvpenforced_OpenGL.exe   (renderer OpenGL nativo)
+#   - Pvpenforced_DirectX.exe  (renderer DX9 via ANGLE)
+# Roda em paralelo (matrix), upload de cada exe como artifact separado.
+# Trigger: workflow_dispatch (botão "Run workflow") ou push em main.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  LUKKA_RUN_VCPKG_SHA: "${{ vars.LUKKA_RUN_VCPKG_SHA != '' && vars.LUKKA_RUN_VCPKG_SHA || 'b3dd708d38df5c856fe1c18dc0d59ab771f93921' }}"
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  MAKEFLAGS: "-j 2"
+
+jobs:
+  build:
+    name: ${{ matrix.renderer.name }}
+    runs-on: windows-2022
+
+    strategy:
+      fail-fast: false
+      matrix:
+        renderer:
+          - name: OpenGL
+            output_exe: Pvpenforced_OpenGL.exe
+            toggle_directx: "OFF"
+          - name: DirectX
+            output_exe: Pvpenforced_DirectX.exe
+            toggle_directx: "ON"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get vcpkg commit ID
+        id: vcpkg-step
+        shell: pwsh
+        run: |
+          $json = Get-Content vcpkg.json -Raw | ConvertFrom-Json
+          $commit = $json.'builtin-baseline'
+          echo "vcpkgGitCommitId=$commit" >> $env:GITHUB_OUTPUT
+
+      - name: Compute vcpkg.json hash
+        id: hash
+        shell: pwsh
+        run: |
+          $bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-Content "vcpkg.json" -Raw -Encoding UTF8))
+          $sha = [BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)) -replace '-', ''
+          echo "hash=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Cache vcpkg artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/vcpkg
+            ${{ github.workspace }}/build/vcpkg_installed
+          key: vcpkg-${{ matrix.renderer.name }}-x64-windows-static-${{ steps.hash.outputs.hash }}
+          restore-keys: |
+            vcpkg-${{ matrix.renderer.name }}-x64-windows-static-
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ steps.vcpkg-step.outputs.vcpkgGitCommitId }}
+
+      - name: Get latest CMake and Ninja
+        uses: lukka/get-cmake@latest
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -G Ninja -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DTOGGLE_DIRECTX=${{ matrix.renderer.toggle_directx }} `
+            -DOPTIONS_ENABLE_SCCACHE=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $artifactDir = "$env:GITHUB_WORKSPACE\artifacts"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+
+          $exePath = Get-ChildItem -Recurse -Path build -Filter "otclient*.exe" | Select-Object -First 1
+          if (-not $exePath) {
+            Write-Error "otclient*.exe not found in build/"
+            Get-ChildItem -Recurse -Path build -Filter "*.exe" | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          }
+
+          $destPath = Join-Path $artifactDir "${{ matrix.renderer.output_exe }}"
+          Copy-Item $exePath.FullName -Destination $destPath
+          Write-Host "Built: $destPath ($([math]::Round((Get-Item $destPath).Length / 1MB, 2)) MB)"
+
+          # Verifica imports pra confirmar renderer correto
+          $imports = & "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\dumpbin.exe" /imports $destPath 2>&1 | Select-String -Pattern "(d3d9|dxgi|OPENGL32|opengl32)\.dll"
+          Write-Host "--- Renderer imports ---"
+          $imports | ForEach-Object { Write-Host "  $_" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvpenforced-${{ matrix.renderer.name }}
+          path: artifacts/
+          retention-days: 14

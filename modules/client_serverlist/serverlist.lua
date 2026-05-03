@@ -177,7 +177,7 @@ end
 
 function ServerList.save()
     g_settings.setNode('ServerList', servers)
-    g_configs.saveSettings()
+    g_settings.save()
 end
 
 function ServerList.getServers()
