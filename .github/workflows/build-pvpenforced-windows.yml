@@ -80,12 +80,45 @@ jobs:
       - name: Get latest CMake and Ninja
         uses: lukka/get-cmake@v3.31.6
 
-      - name: Configure and Build
-        uses: lukka/run-cmake@main
+      - name: Configure
+        shell: pwsh
+        run: |
+          Write-Host "VCPKG_ROOT=$env:VCPKG_ROOT"
+          cmake --preset windows-release -DTOGGLE_DIRECTX=${{ matrix.renderer.directx }} 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build --preset windows-release 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Collect debug logs (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          $d = "debuglogs"; New-Item -ItemType Directory -Force $d | Out-Null
+          $r = "${{ matrix.renderer.name }}"
+          foreach ($f in 'configure.log','build.log') {
+            if (Test-Path $f) { Get-Content $f -Tail 600 | Set-Content "$d/$r-$f" }
+          }
+          Get-ChildItem -Recurse -Path build -Filter "CMake*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-Content $_.FullName -Tail 300 | Set-Content "$d/$r-$($_.Name)"
+          }
+          Get-ChildItem -Recurse -Path vcpkg/buildtrees -Filter "*.log" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 8 | ForEach-Object {
+              Get-Content $_.FullName -Tail 250 | Set-Content "$d/$r-$($_.Directory.Name)-$($_.Name)"
+            }
+          Get-ChildItem $d | ForEach-Object { Write-Host $_.Name }
+
+      - name: Publish debug logs (on failure)
+        if: failure()
+        uses: softprops/action-gh-release@v2
         with:
-          configurePreset: windows-release
-          buildPreset: windows-release
-          configurePresetAdditionalArgs: "['-DTOGGLE_DIRECTX=${{ matrix.renderer.directx }}']"
+          tag_name: debug-${{ github.run_number }}-${{ matrix.renderer.name }}
+          name: DEBUG logs run ${{ github.run_number }} ${{ matrix.renderer.name }}
+          prerelease: true
+          files: debuglogs/*
 
       - name: Prepare artifact folder
         shell: pwsh
