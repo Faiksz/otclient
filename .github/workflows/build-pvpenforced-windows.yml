@@ -80,15 +80,28 @@ jobs:
       - name: Get latest CMake and Ninja
         uses: lukka/get-cmake@v3.31.6
 
+      # Ninja + MSVC precisam do ambiente do Developer Prompt (o run-cmake fazia isso por baixo)
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
         shell: pwsh
+        env:
+          # sem token do cache do GHA (so o run-cmake injetava) o x-gha falha; cache vem do actions/cache
+          VCPKG_BINARY_SOURCES: clear
         run: |
           Write-Host "VCPKG_ROOT=$env:VCPKG_ROOT"
+          Write-Host "ninja: $(Get-Command ninja -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)"
+          Write-Host "cl:    $(Get-Command cl -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)"
           cmake --preset windows-release -DTOGGLE_DIRECTX=${{ matrix.renderer.directx }} 2>&1 | Tee-Object -FilePath configure.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         shell: pwsh
+        env:
+          VCPKG_BINARY_SOURCES: clear
         run: |
           cmake --build --preset windows-release 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
